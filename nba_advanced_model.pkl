@@ -1,0 +1,798 @@
+"""
+================================================================================
+NBA ROOKIE CAREER PREDICTION SYSTEM
+================================================================================
+A comprehensive machine learning system for predicting NBA rookie success.
+
+Features:
+1. Advanced Models: Stacking Ensemble, Neural Networks, Gradient Boosting
+2. Bust Detection: Classification model to identify likely busts
+3. Position-Specific Models: Tailored models for Guards, Forwards, Centers
+
+Author: [Your Name]
+Project: NBA Rookie Success Prediction
+================================================================================
+"""
+
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import (train_test_split, cross_val_score, 
+                                      StratifiedKFold, KFold)
+from sklearn.linear_model import Ridge, Lasso, ElasticNet, LogisticRegression
+from sklearn.ensemble import (RandomForestRegressor, GradientBoostingRegressor,
+                              RandomForestClassifier, GradientBoostingClassifier,
+                              StackingRegressor, StackingClassifier,
+                              AdaBoostRegressor, AdaBoostClassifier,
+                              ExtraTreesRegressor, ExtraTreesClassifier,
+                              BaggingRegressor, VotingRegressor, VotingClassifier)
+from sklearn.neural_network import MLPRegressor, MLPClassifier
+from sklearn.svm import SVR, SVC
+from sklearn.neighbors import KNeighborsRegressor, KNeighborsClassifier
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.metrics import (mean_squared_error, r2_score, mean_absolute_error,
+                             accuracy_score, precision_score, recall_score, 
+                             f1_score, confusion_matrix, classification_report,
+                             roc_auc_score, roc_curve)
+import pickle
+import warnings
+warnings.filterwarnings('ignore')
+
+# ================================================================================
+# UTILITY FUNCTIONS
+# ================================================================================
+
+def print_header(text):
+    print("\n" + "=" * 80)
+    print(f" {text}")
+    print("=" * 80)
+
+def print_subheader(text):
+    print(f"\n{'─' * 40}")
+    print(f" {text}")
+    print(f"{'─' * 40}")
+
+# ================================================================================
+# STEP 1: DATA LOADING AND PREPROCESSING
+# ================================================================================
+
+print_header("NBA ROOKIE CAREER PREDICTION SYSTEM")
+print("Loading and preprocessing data...")
+
+# Load data
+training_raw = pd.read_csv('/mnt/user-data/uploads/raw_nba_csv_TRAINING_RAW_.csv')
+model_table = pd.read_csv('/mnt/user-data/uploads/raw_nba_csv_MODEL_TABLE_.csv', skiprows=3)
+model_table.columns = ['PlayerName', 'Target_WS_2_5']
+model_table = model_table[model_table['PlayerName'] != 'Grand Total']
+
+# Merge datasets
+df = pd.merge(training_raw, model_table, on='PlayerName', how='inner')
+
+# Convert numeric columns
+numeric_cols = ['Age', 'G', 'GS', 'MP', 'PER', 'TS%', '3PAr', 'FTr', 'ORB%', 'DRB%', 
+                'TRB%', 'AST%', 'STL%', 'BLK%', 'TOV%', 'USG%', 'OWS', 'DWS', 'WS', 
+                'WS/48', 'OBPM', 'DBPM', 'BPM', 'VORP', 'FG', 'FGA', 'FG%', '3P', 
+                '3PA', '3P%', '2P', '2PA', '2P%', 'eFG%', 'FT', 'FTA', 'FT%', 
+                'ORB', 'DRB', 'TRB', 'AST', 'STL', 'BLK', 'TOV', 'PF', 'PTS']
+
+for col in numeric_cols:
+    if col in df.columns:
+        df[col] = pd.to_numeric(df[col].astype(str).str.replace('%', ''), errors='coerce')
+
+df['Target_WS_2_5'] = pd.to_numeric(df['Target_WS_2_5'], errors='coerce')
+
+# Keep player with most minutes played
+df = df.sort_values('MP', ascending=False).drop_duplicates(subset='PlayerName', keep='first')
+
+# Store position information before feature engineering
+df['Position_Raw'] = df['Pos'].fillna('Unknown')
+
+print(f"✓ Loaded {len(df)} unique players")
+
+# ================================================================================
+# STEP 2: FEATURE ENGINEERING
+# ================================================================================
+
+print_subheader("Feature Engineering")
+
+# Per-game statistics
+df['MP_per_G'] = df['MP'] / df['G'].replace(0, 1)
+df['PTS_per_G'] = df['PTS'] / df['G'].replace(0, 1)
+df['PTS_per_36'] = df['PTS'] / df['MP'].replace(0, 1) * 36
+df['AST_per_G'] = df['AST'] / df['G'].replace(0, 1)
+df['TRB_per_G'] = df['TRB'] / df['G'].replace(0, 1)
+df['STL_per_G'] = df['STL'] / df['G'].replace(0, 1)
+df['BLK_per_G'] = df['BLK'] / df['G'].replace(0, 1)
+df['TOV_per_G'] = df['TOV'] / df['G'].replace(0, 1)
+
+# Efficiency metrics
+df['AST_to_TOV'] = df['AST'] / df['TOV'].replace(0, 1)
+df['STL_plus_BLK'] = df['STL%'] + df['BLK%']
+df['ORB_to_DRB'] = df['ORB%'] / df['DRB%'].replace(0, 1)
+df['PER_per_USG'] = df['PER'] / df['USG%'].replace(0, 1)
+
+# Youth potential (younger = more upside)
+df['Youth_factor'] = 25 - df['Age']
+df['Youth_x_WS'] = df['Youth_factor'] * df['WS']
+df['Youth_x_PER'] = df['Youth_factor'] * df['PER']
+df['Youth_x_VORP'] = df['Youth_factor'] * df['VORP']
+
+# Playing time trust from coaches
+df['GS_ratio'] = df['GS'] / df['G'].replace(0, 1)
+df['GS_ratio_x_WS'] = df['GS_ratio'] * df['WS']
+df['GS_ratio_x_MP'] = df['GS_ratio'] * df['MP']
+
+# Volume and opportunity
+df['FGA_per_G'] = df['FGA'] / df['G'].replace(0, 1)
+df['Shot_volume_per_G'] = (df['FGA'] + df['FTA']) / df['G'].replace(0, 1)
+df['Usage_opportunity'] = df['USG%'] * df['MP_per_G']
+
+# Composite efficiency scores
+df['True_shooting_volume'] = df['TS%'] * df['USG%']
+df['eFG_x_volume'] = df['eFG%'] * df['FGA']
+df['BPM_x_MP'] = df['BPM'] * df['MP']
+df['VORP_per_G'] = df['VORP'] / df['G'].replace(0, 1)
+
+# Box score impact
+df['Box_score_impact'] = (df['PTS'] + 1.2*df['TRB'] + 1.5*df['AST'] + 
+                          2*df['STL'] + 2*df['BLK'] - df['TOV'])
+df['Box_impact_per_G'] = df['Box_score_impact'] / df['G'].replace(0, 1)
+df['Box_impact_per_MP'] = df['Box_score_impact'] / df['MP'].replace(0, 1) * 100
+
+# Win share components analysis
+df['OWS_share'] = df['OWS'] / (df['WS'].replace(0, 0.001).abs() + 0.001)
+df['DWS_share'] = df['DWS'] / (df['WS'].replace(0, 0.001).abs() + 0.001)
+
+# Logarithmic transforms for skewed data
+df['log_MP'] = np.log1p(df['MP'])
+df['log_PTS'] = np.log1p(df['PTS'])
+df['log_WS_pos'] = np.log1p(df['WS'].clip(lower=0))
+
+# Interaction terms
+df['Age_x_MP'] = df['Age'] * df['MP']
+df['PER_x_MP'] = df['PER'] * df['MP']
+df['WS48_x_MP'] = df['WS/48'] * df['MP']
+df['Age_squared'] = df['Age'] ** 2
+
+# Shooting profile
+df['Three_point_reliance'] = df['3PA'] / df['FGA'].replace(0, 1)
+df['FT_rate'] = df['FTA'] / df['FGA'].replace(0, 1)
+df['Mid_range_reliance'] = 1 - df['Three_point_reliance'] - (df['FTA'] / df['FGA'].replace(0, 1) * 0.44)
+
+# Defensive metrics
+df['Defensive_impact'] = df['STL%'] + df['BLK%'] + df['DRB%'] / 10
+df['Defensive_WS_rate'] = df['DWS'] / df['MP'].replace(0, 1) * 1000
+
+# Offensive metrics  
+df['Offensive_load'] = df['USG%'] * df['AST%'] / 100
+df['Scoring_efficiency'] = df['PTS'] / (df['FGA'] + 0.44 * df['FTA']).replace(0, 1)
+
+print(f"✓ Created {len([c for c in df.columns if c not in training_raw.columns])} engineered features")
+
+# ================================================================================
+# STEP 3: POSITION CLASSIFICATION
+# ================================================================================
+
+print_subheader("Position Classification")
+
+def classify_position(pos):
+    """Classify positions into Guard, Forward, Center"""
+    if pd.isna(pos):
+        return 'Unknown'
+    pos = str(pos).upper()
+    if 'PG' in pos or 'SG' in pos or pos == 'G':
+        return 'Guard'
+    elif 'SF' in pos or 'PF' in pos or pos == 'F':
+        return 'Forward'
+    elif 'C' in pos:
+        return 'Center'
+    else:
+        return 'Unknown'
+
+df['Position_Group'] = df['Position_Raw'].apply(classify_position)
+
+position_counts = df['Position_Group'].value_counts()
+print("Position distribution:")
+for pos, count in position_counts.items():
+    print(f"  • {pos}: {count} players ({count/len(df)*100:.1f}%)")
+
+# ================================================================================
+# STEP 4: BUST DETECTION LABELS
+# ================================================================================
+
+print_subheader("Bust Detection Labels")
+
+# Define "bust" criteria - players with very low Win Shares in years 2-5
+# A bust is someone who produced less than 5 total Win Shares over 4 years
+BUST_THRESHOLD = 5.0
+
+df['Is_Bust'] = (df['Target_WS_2_5'] < BUST_THRESHOLD).astype(int)
+
+bust_counts = df['Is_Bust'].value_counts()
+print(f"Bust threshold: < {BUST_THRESHOLD} Win Shares over Years 2-5")
+print(f"  • Busts: {bust_counts.get(1, 0)} players ({bust_counts.get(1, 0)/len(df)*100:.1f}%)")
+print(f"  • Non-busts: {bust_counts.get(0, 0)} players ({bust_counts.get(0, 0)/len(df)*100:.1f}%)")
+
+# Also create tiers for more nuanced analysis
+def player_tier(ws):
+    if ws < 0:
+        return 'Negative Value'
+    elif ws < 5:
+        return 'Bust'
+    elif ws < 15:
+        return 'Below Average'
+    elif ws < 25:
+        return 'Average Starter'
+    elif ws < 40:
+        return 'Quality Starter'
+    else:
+        return 'Star'
+
+df['Player_Tier'] = df['Target_WS_2_5'].apply(player_tier)
+print("\nPlayer tier distribution:")
+for tier in ['Star', 'Quality Starter', 'Average Starter', 'Below Average', 'Bust', 'Negative Value']:
+    count = len(df[df['Player_Tier'] == tier])
+    print(f"  • {tier}: {count} ({count/len(df)*100:.1f}%)")
+
+# ================================================================================
+# STEP 5: PREPARE FEATURE SETS
+# ================================================================================
+
+print_subheader("Preparing Feature Sets")
+
+# All features for modeling
+all_features = [
+    # Original stats
+    'Age', 'G', 'GS', 'MP', 'PER', 'TS%', 'USG%', 'AST%', 'TRB%', 'STL%', 'BLK%',
+    'TOV%', 'WS', 'WS/48', 'OWS', 'DWS', 'BPM', 'OBPM', 'DBPM', 'VORP',
+    'FG%', '3P%', '2P%', 'eFG%', 'FT%', '3PAr', 'FTr', 'ORB%', 'DRB%',
+    'PTS', 'TRB', 'AST', 'STL', 'BLK', 'TOV',
+    # Engineered
+    'MP_per_G', 'PTS_per_G', 'PTS_per_36', 'AST_per_G', 'TRB_per_G',
+    'STL_per_G', 'BLK_per_G', 'TOV_per_G', 'AST_to_TOV', 'STL_plus_BLK',
+    'PER_per_USG', 'Youth_factor', 'Youth_x_WS', 'Youth_x_PER', 'Youth_x_VORP',
+    'GS_ratio', 'GS_ratio_x_WS', 'GS_ratio_x_MP', 'FGA_per_G', 'Shot_volume_per_G',
+    'Usage_opportunity', 'True_shooting_volume', 'eFG_x_volume', 'BPM_x_MP',
+    'VORP_per_G', 'Box_score_impact', 'Box_impact_per_G', 'Box_impact_per_MP',
+    'log_MP', 'log_PTS', 'log_WS_pos', 'Age_x_MP', 'PER_x_MP', 'WS48_x_MP',
+    'Age_squared', 'Three_point_reliance', 'FT_rate', 'Defensive_impact',
+    'Defensive_WS_rate', 'Offensive_load', 'Scoring_efficiency'
+]
+
+# Filter to available features
+available_features = [f for f in all_features if f in df.columns]
+
+# Prepare data
+X = df[available_features].copy()
+y_regression = df['Target_WS_2_5'].copy()
+y_classification = df['Is_Bust'].copy()
+player_names = df['PlayerName'].copy()
+positions = df['Position_Group'].copy()
+
+# Handle missing/infinite values
+X = X.replace([np.inf, -np.inf], np.nan)
+valid_mask = ~(X.isnull().any(axis=1) | y_regression.isnull())
+X = X[valid_mask].fillna(X.median())
+y_regression = y_regression[valid_mask]
+y_classification = y_classification[valid_mask]
+player_names = player_names[valid_mask]
+positions = positions[valid_mask]
+
+print(f"✓ {len(X)} players with {len(available_features)} features")
+
+# ================================================================================
+# STEP 6: TRAIN/TEST SPLIT
+# ================================================================================
+
+print_subheader("Train/Test Split")
+
+X_train, X_test, y_train_reg, y_test_reg, y_train_clf, y_test_clf, \
+names_train, names_test, pos_train, pos_test = train_test_split(
+    X, y_regression, y_classification, player_names, positions,
+    test_size=0.2, random_state=42, stratify=y_classification
+)
+
+print(f"Training set: {len(X_train)} players")
+print(f"Test set: {len(X_test)} players")
+print(f"Bust ratio in train: {y_train_clf.mean():.1%}")
+print(f"Bust ratio in test: {y_test_clf.mean():.1%}")
+
+# Scale features
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+# ================================================================================
+# PART A: ADVANCED REGRESSION MODELS (Win Share Prediction)
+# ================================================================================
+
+print_header("PART A: ADVANCED REGRESSION MODELS")
+print("Predicting Win Shares for Years 2-5")
+
+# Define base models for stacking
+ridge = Ridge(alpha=10)
+rf = RandomForestRegressor(n_estimators=200, max_depth=15, random_state=42, n_jobs=-1)
+gb = GradientBoostingRegressor(n_estimators=200, max_depth=6, learning_rate=0.05, random_state=42)
+et = ExtraTreesRegressor(n_estimators=200, max_depth=15, random_state=42, n_jobs=-1)
+ada = AdaBoostRegressor(n_estimators=100, random_state=42)
+mlp = MLPRegressor(hidden_layer_sizes=(100, 50, 25), max_iter=1000, random_state=42, early_stopping=True)
+knn = KNeighborsRegressor(n_neighbors=10)
+bagging = BaggingRegressor(n_estimators=50, random_state=42, n_jobs=-1)
+
+# All regression models to test
+regression_models = {
+    'Ridge Regression': (Ridge(alpha=10), True),  # (model, needs_scaling)
+    'Random Forest': (RandomForestRegressor(n_estimators=300, max_depth=20, min_samples_leaf=2, random_state=42, n_jobs=-1), False),
+    'Gradient Boosting': (GradientBoostingRegressor(n_estimators=300, max_depth=7, learning_rate=0.03, random_state=42), False),
+    'Extra Trees': (ExtraTreesRegressor(n_estimators=300, max_depth=20, random_state=42, n_jobs=-1), False),
+    'AdaBoost': (AdaBoostRegressor(n_estimators=150, learning_rate=0.05, random_state=42), False),
+    'Neural Network (MLP)': (MLPRegressor(hidden_layer_sizes=(128, 64, 32), max_iter=1500, 
+                                           learning_rate='adaptive', random_state=42, early_stopping=True), True),
+    'K-Nearest Neighbors': (KNeighborsRegressor(n_neighbors=7, weights='distance'), True),
+    'Bagging Regressor': (BaggingRegressor(n_estimators=100, random_state=42, n_jobs=-1), False),
+}
+
+# Stacking Ensemble
+stacking_reg = StackingRegressor(
+    estimators=[
+        ('ridge', Ridge(alpha=10)),
+        ('rf', RandomForestRegressor(n_estimators=100, max_depth=12, random_state=42, n_jobs=-1)),
+        ('gb', GradientBoostingRegressor(n_estimators=100, max_depth=5, random_state=42)),
+        ('et', ExtraTreesRegressor(n_estimators=100, max_depth=12, random_state=42, n_jobs=-1)),
+        ('mlp', MLPRegressor(hidden_layer_sizes=(64, 32), max_iter=500, random_state=42))
+    ],
+    final_estimator=Ridge(alpha=1),
+    cv=5,
+    n_jobs=-1
+)
+regression_models['Stacking Ensemble'] = (stacking_reg, True)
+
+# Voting Ensemble
+voting_reg = VotingRegressor(
+    estimators=[
+        ('rf', RandomForestRegressor(n_estimators=150, max_depth=15, random_state=42, n_jobs=-1)),
+        ('gb', GradientBoostingRegressor(n_estimators=150, max_depth=6, random_state=42)),
+        ('et', ExtraTreesRegressor(n_estimators=150, max_depth=15, random_state=42, n_jobs=-1)),
+    ],
+    n_jobs=-1
+)
+regression_models['Voting Ensemble'] = (voting_reg, False)
+
+print(f"\nTraining {len(regression_models)} regression models...")
+print("-" * 80)
+
+reg_results = []
+
+for name, (model, needs_scaling) in regression_models.items():
+    # Select appropriate data
+    X_tr = X_train_scaled if needs_scaling else X_train
+    X_te = X_test_scaled if needs_scaling else X_test
+    
+    # Train
+    model.fit(X_tr, y_train_reg)
+    
+    # Predict
+    train_pred = model.predict(X_tr)
+    test_pred = model.predict(X_te)
+    
+    # Metrics
+    train_r2 = r2_score(y_train_reg, train_pred)
+    test_r2 = r2_score(y_test_reg, test_pred)
+    test_rmse = np.sqrt(mean_squared_error(y_test_reg, test_pred))
+    test_mae = mean_absolute_error(y_test_reg, test_pred)
+    
+    reg_results.append({
+        'Model': name,
+        'Train_R2': train_r2,
+        'Test_R2': test_r2,
+        'Test_RMSE': test_rmse,
+        'Test_MAE': test_mae,
+        'model_obj': model,
+        'needs_scaling': needs_scaling,
+        'predictions': test_pred
+    })
+    
+    print(f"{name:<25} | Train R²: {train_r2:.4f} | Test R²: {test_r2:.4f} | RMSE: {test_rmse:.2f} | MAE: {test_mae:.2f}")
+
+# Find best regression model
+best_reg = min(reg_results, key=lambda x: x['Test_RMSE'])
+print(f"\n🏆 BEST REGRESSION MODEL: {best_reg['Model']}")
+print(f"   Test R²: {best_reg['Test_R2']:.4f} | Test RMSE: {best_reg['Test_RMSE']:.2f} | Test MAE: {best_reg['Test_MAE']:.2f}")
+
+# ================================================================================
+# PART B: BUST DETECTION (Classification)
+# ================================================================================
+
+print_header("PART B: BUST DETECTION CLASSIFIER")
+print(f"Predicting if a rookie will be a 'bust' (< {BUST_THRESHOLD} WS over Years 2-5)")
+
+# Classification models
+classification_models = {
+    'Logistic Regression': (LogisticRegression(max_iter=1000, random_state=42), True),
+    'Random Forest Clf': (RandomForestClassifier(n_estimators=300, max_depth=15, random_state=42, n_jobs=-1), False),
+    'Gradient Boosting Clf': (GradientBoostingClassifier(n_estimators=200, max_depth=5, random_state=42), False),
+    'Extra Trees Clf': (ExtraTreesClassifier(n_estimators=300, max_depth=15, random_state=42, n_jobs=-1), False),
+    'Neural Network Clf': (MLPClassifier(hidden_layer_sizes=(128, 64, 32), max_iter=1000, random_state=42), True),
+    'AdaBoost Clf': (AdaBoostClassifier(n_estimators=150, random_state=42), False),
+    'K-Nearest Neighbors Clf': (KNeighborsClassifier(n_neighbors=7, weights='distance'), True),
+}
+
+# Stacking Classifier
+stacking_clf = StackingClassifier(
+    estimators=[
+        ('lr', LogisticRegression(max_iter=500, random_state=42)),
+        ('rf', RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1)),
+        ('gb', GradientBoostingClassifier(n_estimators=100, max_depth=4, random_state=42)),
+    ],
+    final_estimator=LogisticRegression(max_iter=500),
+    cv=5,
+    n_jobs=-1
+)
+classification_models['Stacking Classifier'] = (stacking_clf, True)
+
+# Voting Classifier
+voting_clf = VotingClassifier(
+    estimators=[
+        ('rf', RandomForestClassifier(n_estimators=150, max_depth=12, random_state=42, n_jobs=-1)),
+        ('gb', GradientBoostingClassifier(n_estimators=150, max_depth=5, random_state=42)),
+        ('et', ExtraTreesClassifier(n_estimators=150, max_depth=12, random_state=42, n_jobs=-1)),
+    ],
+    voting='soft',
+    n_jobs=-1
+)
+classification_models['Voting Classifier'] = (voting_clf, False)
+
+print(f"\nTraining {len(classification_models)} classification models...")
+print("-" * 80)
+
+clf_results = []
+
+for name, (model, needs_scaling) in classification_models.items():
+    X_tr = X_train_scaled if needs_scaling else X_train
+    X_te = X_test_scaled if needs_scaling else X_test
+    
+    # Train
+    model.fit(X_tr, y_train_clf)
+    
+    # Predict
+    train_pred = model.predict(X_tr)
+    test_pred = model.predict(X_te)
+    
+    # Get probabilities if available
+    if hasattr(model, 'predict_proba'):
+        test_proba = model.predict_proba(X_te)[:, 1]
+        try:
+            roc_auc = roc_auc_score(y_test_clf, test_proba)
+        except:
+            roc_auc = 0
+    else:
+        test_proba = test_pred
+        roc_auc = 0
+    
+    # Metrics
+    train_acc = accuracy_score(y_train_clf, train_pred)
+    test_acc = accuracy_score(y_test_clf, test_pred)
+    test_precision = precision_score(y_test_clf, test_pred, zero_division=0)
+    test_recall = recall_score(y_test_clf, test_pred, zero_division=0)
+    test_f1 = f1_score(y_test_clf, test_pred, zero_division=0)
+    
+    clf_results.append({
+        'Model': name,
+        'Train_Acc': train_acc,
+        'Test_Acc': test_acc,
+        'Precision': test_precision,
+        'Recall': test_recall,
+        'F1_Score': test_f1,
+        'ROC_AUC': roc_auc,
+        'model_obj': model,
+        'needs_scaling': needs_scaling,
+        'predictions': test_pred,
+        'probabilities': test_proba
+    })
+    
+    print(f"{name:<25} | Acc: {test_acc:.3f} | Prec: {test_precision:.3f} | Recall: {test_recall:.3f} | F1: {test_f1:.3f} | AUC: {roc_auc:.3f}")
+
+# Find best classification model (by F1 score - balances precision and recall)
+best_clf = max(clf_results, key=lambda x: x['F1_Score'])
+print(f"\n🏆 BEST BUST DETECTION MODEL: {best_clf['Model']}")
+print(f"   Accuracy: {best_clf['Test_Acc']:.3f} | F1: {best_clf['F1_Score']:.3f} | ROC-AUC: {best_clf['ROC_AUC']:.3f}")
+
+# Confusion Matrix for best model
+print(f"\nConfusion Matrix ({best_clf['Model']}):")
+cm = confusion_matrix(y_test_clf, best_clf['predictions'])
+print(f"                 Predicted")
+print(f"                 Non-Bust  Bust")
+print(f"Actual Non-Bust    {cm[0,0]:<6}   {cm[0,1]:<6}")
+print(f"Actual Bust        {cm[1,0]:<6}   {cm[1,1]:<6}")
+
+tn, fp, fn, tp = cm.ravel()
+print(f"\n  • True Positives (Correctly identified busts): {tp}")
+print(f"  • True Negatives (Correctly identified non-busts): {tn}")
+print(f"  • False Positives (Non-busts labeled as busts): {fp}")
+print(f"  • False Negatives (Busts missed): {fn}")
+
+# ================================================================================
+# PART C: POSITION-SPECIFIC MODELS
+# ================================================================================
+
+print_header("PART C: POSITION-SPECIFIC MODELS")
+print("Training separate models for Guards, Forwards, and Centers")
+
+position_models = {}
+position_results = []
+
+for position in ['Guard', 'Forward', 'Center']:
+    print(f"\n{'─' * 40}")
+    print(f" {position.upper()} MODEL")
+    print(f"{'─' * 40}")
+    
+    # Filter data for this position
+    pos_mask_train = pos_train == position
+    pos_mask_test = pos_test == position
+    
+    if pos_mask_train.sum() < 30 or pos_mask_test.sum() < 5:
+        print(f"  ⚠ Insufficient data for {position} (train: {pos_mask_train.sum()}, test: {pos_mask_test.sum()})")
+        continue
+    
+    X_pos_train = X_train[pos_mask_train]
+    X_pos_test = X_test[pos_mask_test]
+    y_pos_train = y_train_reg[pos_mask_train]
+    y_pos_test = y_test_reg[pos_mask_test]
+    y_pos_train_clf = y_train_clf[pos_mask_train]
+    y_pos_test_clf = y_test_clf[pos_mask_test]
+    names_pos_test = names_test[pos_mask_test]
+    
+    print(f"  Training samples: {len(X_pos_train)}")
+    print(f"  Test samples: {len(X_pos_test)}")
+    
+    # Train position-specific regression model
+    pos_reg_model = GradientBoostingRegressor(n_estimators=200, max_depth=6, learning_rate=0.05, random_state=42)
+    pos_reg_model.fit(X_pos_train, y_pos_train)
+    
+    pos_train_pred = pos_reg_model.predict(X_pos_train)
+    pos_test_pred = pos_reg_model.predict(X_pos_test)
+    
+    pos_train_r2 = r2_score(y_pos_train, pos_train_pred)
+    pos_test_r2 = r2_score(y_pos_test, pos_test_pred)
+    pos_test_rmse = np.sqrt(mean_squared_error(y_pos_test, pos_test_pred))
+    pos_test_mae = mean_absolute_error(y_pos_test, pos_test_pred)
+    
+    print(f"\n  REGRESSION (Win Shares Prediction):")
+    print(f"    Train R²: {pos_train_r2:.4f}")
+    print(f"    Test R²:  {pos_test_r2:.4f}")
+    print(f"    Test RMSE: {pos_test_rmse:.2f}")
+    print(f"    Test MAE:  {pos_test_mae:.2f}")
+    
+    # Train position-specific bust detection model
+    pos_clf_model = GradientBoostingClassifier(n_estimators=150, max_depth=5, random_state=42)
+    pos_clf_model.fit(X_pos_train, y_pos_train_clf)
+    
+    pos_clf_pred = pos_clf_model.predict(X_pos_test)
+    pos_clf_acc = accuracy_score(y_pos_test_clf, pos_clf_pred)
+    pos_clf_f1 = f1_score(y_pos_test_clf, pos_clf_pred, zero_division=0)
+    
+    print(f"\n  BUST DETECTION:")
+    print(f"    Accuracy: {pos_clf_acc:.3f}")
+    print(f"    F1 Score: {pos_clf_f1:.3f}")
+    
+    # Store models
+    position_models[position] = {
+        'regression': pos_reg_model,
+        'classification': pos_clf_model
+    }
+    
+    position_results.append({
+        'Position': position,
+        'N_Train': len(X_pos_train),
+        'N_Test': len(X_pos_test),
+        'Reg_R2': pos_test_r2,
+        'Reg_RMSE': pos_test_rmse,
+        'Clf_Acc': pos_clf_acc,
+        'Clf_F1': pos_clf_f1
+    })
+    
+    # Show sample predictions
+    print(f"\n  Sample {position} Predictions:")
+    sample_df = pd.DataFrame({
+        'Player': names_pos_test.values[:5],
+        'Actual': y_pos_test.values[:5],
+        'Predicted': pos_test_pred[:5]
+    })
+    for _, row in sample_df.iterrows():
+        error = row['Actual'] - row['Predicted']
+        print(f"    {row['Player']:<22} Actual: {row['Actual']:>6.1f}  Pred: {row['Predicted']:>6.1f}  Error: {error:>+6.1f}")
+
+# ================================================================================
+# PART D: COMPREHENSIVE RESULTS SUMMARY
+# ================================================================================
+
+print_header("COMPREHENSIVE RESULTS SUMMARY")
+
+# Regression Results Table
+print("\n📊 REGRESSION MODEL COMPARISON (Predicting Win Shares):")
+print("-" * 80)
+print(f"{'Model':<28} {'Train R²':<12} {'Test R²':<12} {'RMSE':<10} {'MAE':<10}")
+print("-" * 80)
+for r in sorted(reg_results, key=lambda x: x['Test_RMSE']):
+    print(f"{r['Model']:<28} {r['Train_R2']:<12.4f} {r['Test_R2']:<12.4f} {r['Test_RMSE']:<10.2f} {r['Test_MAE']:<10.2f}")
+
+# Classification Results Table  
+print("\n📊 BUST DETECTION MODEL COMPARISON:")
+print("-" * 80)
+print(f"{'Model':<28} {'Accuracy':<10} {'Precision':<10} {'Recall':<10} {'F1':<10} {'AUC':<10}")
+print("-" * 80)
+for r in sorted(clf_results, key=lambda x: -x['F1_Score']):
+    print(f"{r['Model']:<28} {r['Test_Acc']:<10.3f} {r['Precision']:<10.3f} {r['Recall']:<10.3f} {r['F1_Score']:<10.3f} {r['ROC_AUC']:<10.3f}")
+
+# Position-Specific Results
+print("\n📊 POSITION-SPECIFIC MODEL RESULTS:")
+print("-" * 70)
+print(f"{'Position':<12} {'N_Train':<10} {'N_Test':<10} {'R²':<10} {'RMSE':<10} {'Bust F1':<10}")
+print("-" * 70)
+for r in position_results:
+    print(f"{r['Position']:<12} {r['N_Train']:<10} {r['N_Test']:<10} {r['Reg_R2']:<10.4f} {r['Reg_RMSE']:<10.2f} {r['Clf_F1']:<10.3f}")
+
+# ================================================================================
+# PART E: DETAILED PREDICTION ANALYSIS
+# ================================================================================
+
+print_header("DETAILED PREDICTION ANALYSIS")
+
+# Create comprehensive test results
+test_results = pd.DataFrame({
+    'Player': names_test.values,
+    'Position': pos_test.values,
+    'Actual_WS': y_test_reg.values,
+    'Predicted_WS': best_reg['predictions'],
+    'Is_Bust_Actual': y_test_clf.values,
+    'Is_Bust_Predicted': best_clf['predictions'],
+    'Bust_Probability': best_clf['probabilities']
+})
+
+test_results['WS_Error'] = test_results['Actual_WS'] - test_results['Predicted_WS']
+test_results['WS_Abs_Error'] = np.abs(test_results['WS_Error'])
+
+# Top performers comparison
+print("\n📈 TOP 15 ACTUAL PERFORMERS - How well did we predict them?")
+print("-" * 90)
+top_actual = test_results.nlargest(15, 'Actual_WS')
+print(f"{'Player':<25} {'Pos':<8} {'Actual':<10} {'Predicted':<10} {'Error':<10} {'Bust Prob':<10}")
+print("-" * 90)
+for _, row in top_actual.iterrows():
+    print(f"{row['Player']:<25} {row['Position']:<8} {row['Actual_WS']:<10.1f} {row['Predicted_WS']:<10.1f} {row['WS_Error']:<+10.1f} {row['Bust_Probability']:<10.1%}")
+
+# Biggest prediction misses
+print("\n⚠️ BIGGEST PREDICTION MISSES:")
+print("-" * 90)
+biggest_misses = test_results.nlargest(10, 'WS_Abs_Error')
+print(f"{'Player':<25} {'Pos':<8} {'Actual':<10} {'Predicted':<10} {'Error':<10} {'Bust Prob':<10}")
+print("-" * 90)
+for _, row in biggest_misses.iterrows():
+    print(f"{row['Player']:<25} {row['Position']:<8} {row['Actual_WS']:<10.1f} {row['Predicted_WS']:<10.1f} {row['WS_Error']:<+10.1f} {row['Bust_Probability']:<10.1%}")
+
+# Bust detection analysis
+print("\n🎯 BUST DETECTION ANALYSIS:")
+print("-" * 60)
+
+# Players we correctly identified as busts
+correct_busts = test_results[(test_results['Is_Bust_Actual'] == 1) & (test_results['Is_Bust_Predicted'] == 1)]
+print(f"\nCorrectly Identified Busts ({len(correct_busts)}):")
+for _, row in correct_busts.head(5).iterrows():
+    print(f"  • {row['Player']}: {row['Actual_WS']:.1f} WS (Bust Prob: {row['Bust_Probability']:.1%})")
+
+# Players we missed (predicted non-bust but were busts)
+missed_busts = test_results[(test_results['Is_Bust_Actual'] == 1) & (test_results['Is_Bust_Predicted'] == 0)]
+print(f"\nMissed Busts ({len(missed_busts)}):")
+for _, row in missed_busts.head(5).iterrows():
+    print(f"  • {row['Player']}: {row['Actual_WS']:.1f} WS (Bust Prob: {row['Bust_Probability']:.1%})")
+
+# False alarms (predicted bust but weren't)
+false_alarms = test_results[(test_results['Is_Bust_Actual'] == 0) & (test_results['Is_Bust_Predicted'] == 1)]
+print(f"\nFalse Alarms - Predicted Bust but Weren't ({len(false_alarms)}):")
+for _, row in false_alarms.head(5).iterrows():
+    print(f"  • {row['Player']}: {row['Actual_WS']:.1f} WS (Bust Prob: {row['Bust_Probability']:.1%})")
+
+# ================================================================================
+# PART F: SAVE MODELS AND RESULTS
+# ================================================================================
+
+print_header("SAVING MODELS AND RESULTS")
+
+# Create comprehensive model package
+final_model_package = {
+    'version': '2.0',
+    'description': 'NBA Rookie Career Prediction System with Bust Detection',
+    
+    # Best models
+    'best_regression_model': best_reg['model_obj'],
+    'best_regression_name': best_reg['Model'],
+    'best_regression_needs_scaling': best_reg['needs_scaling'],
+    
+    'best_classification_model': best_clf['model_obj'],
+    'best_classification_name': best_clf['Model'],
+    'best_classification_needs_scaling': best_clf['needs_scaling'],
+    
+    # Position-specific models
+    'position_models': position_models,
+    
+    # Preprocessing
+    'scaler': scaler,
+    'feature_columns': available_features,
+    'bust_threshold': BUST_THRESHOLD,
+    
+    # Performance metrics
+    'regression_performance': {
+        'test_r2': best_reg['Test_R2'],
+        'test_rmse': best_reg['Test_RMSE'],
+        'test_mae': best_reg['Test_MAE']
+    },
+    'classification_performance': {
+        'accuracy': best_clf['Test_Acc'],
+        'precision': best_clf['Precision'],
+        'recall': best_clf['Recall'],
+        'f1_score': best_clf['F1_Score'],
+        'roc_auc': best_clf['ROC_AUC']
+    },
+    'position_performance': position_results,
+    
+    # All model results for comparison
+    'all_regression_results': [{k: v for k, v in r.items() if k != 'model_obj'} for r in reg_results],
+    'all_classification_results': [{k: v for k, v in r.items() if k not in ['model_obj', 'predictions', 'probabilities']} for r in clf_results]
+}
+
+# Save model
+with open('/home/claude/nba_advanced_model.pkl', 'wb') as f:
+    pickle.dump(final_model_package, f)
+print("✅ Model saved: nba_advanced_model.pkl")
+
+# Save detailed test results
+test_results.to_csv('/home/claude/test_results_detailed.csv', index=False)
+print("✅ Test results saved: test_results_detailed.csv")
+
+# Save model comparison
+reg_comparison = pd.DataFrame([{k: v for k, v in r.items() if k not in ['model_obj', 'predictions', 'needs_scaling']} for r in reg_results])
+reg_comparison.to_csv('/home/claude/regression_model_comparison.csv', index=False)
+print("✅ Regression comparison saved: regression_model_comparison.csv")
+
+clf_comparison = pd.DataFrame([{k: v for k, v in r.items() if k not in ['model_obj', 'predictions', 'probabilities', 'needs_scaling']} for r in clf_results])
+clf_comparison.to_csv('/home/claude/classification_model_comparison.csv', index=False)
+print("✅ Classification comparison saved: classification_model_comparison.csv")
+
+# ================================================================================
+# FINAL SUMMARY
+# ================================================================================
+
+print_header("FINAL SUMMARY")
+
+print(f"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    NBA ROOKIE CAREER PREDICTION SYSTEM                       ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  📊 DATASET                                                                  ║
+║     • {len(X)} players analyzed                                               ║
+║     • {len(available_features)} engineered features                                          ║
+║     • Train/Test split: {len(X_train)}/{len(X_test)} players                                    ║
+║                                                                              ║
+║  🎯 WIN SHARES PREDICTION (Best: {best_reg['Model']:<20})             ║
+║     • Test R²:   {best_reg['Test_R2']:.4f} ({best_reg['Test_R2']*100:.1f}% variance explained)                        ║
+║     • Test RMSE: {best_reg['Test_RMSE']:.2f} Win Shares                                        ║
+║     • Test MAE:  {best_reg['Test_MAE']:.2f} Win Shares                                        ║
+║                                                                              ║
+║  🚨 BUST DETECTION (Best: {best_clf['Model']:<25})            ║
+║     • Accuracy:  {best_clf['Test_Acc']:.1%}                                                  ║
+║     • Precision: {best_clf['Precision']:.1%} (of predicted busts, how many were correct)     ║
+║     • Recall:    {best_clf['Recall']:.1%} (of actual busts, how many did we catch)        ║
+║     • F1 Score:  {best_clf['F1_Score']:.3f}                                                   ║
+║     • ROC-AUC:   {best_clf['ROC_AUC']:.3f}                                                   ║
+║                                                                              ║
+║  📍 POSITION-SPECIFIC MODELS                                                 ║""")
+
+for r in position_results:
+    print(f"║     • {r['Position']:<10} R²: {r['Reg_R2']:.3f}  RMSE: {r['Reg_RMSE']:.2f}  Bust F1: {r['Clf_F1']:.3f}              ║")
+
+print(f"""║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""")
+
+print("🏀 MODEL TRAINING COMPLETE!")
+print("=" * 80)
