@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NBA Rookie Bust Predictor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            color: #fff;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            padding: 30px 0;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(90deg, #ff6b6b, #feca57, #48dbfb);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            color: #a0a0a0;
+            font-size: 1.1rem;
+        }
+
+        .model-stats {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+
+        .stat-box {
+            background: rgba(255,255,255,0.05);
+            padding: 15px 25px;
+            border-radius: 10px;
+            text-align: center;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .stat-box .value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #48dbfb;
+        }
+
+        .stat-box .label {
+            font-size: 0.8rem;
+            color: #888;
+            margin-top: 5px;
+        }
+
+        .form-container {
+            background: rgba(255,255,255,0.05);
+            border-radius: 15px;
+            padding: 30px;
+            margin: 20px 0;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .section-title {
+            font-size: 1.2rem;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #48dbfb;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-group label {
+            font-size: 0.85rem;
+            color: #aaa;
+            margin-bottom: 5px;
+        }
+
+        .form-group input {
+            padding: 10px;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 8px;
+            background: rgba(255,255,255,0.05);
+            color: #fff;
+            font-size: 1rem;
+            transition: all 0.3s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #48dbfb;
+            background: rgba(72, 219, 251, 0.1);
+        }
+
+        .form-group input::placeholder {
+            color: #555;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 15px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(90deg, #48dbfb, #0abde3);
+            color: #1a1a2e;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(72, 219, 251, 0.4);
+        }
+
+        .btn-secondary {
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+            margin-top: 10px;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255,255,255,0.2);
+        }
+
+        /* Results Section */
+        .results-container {
+            display: none;
+            margin-top: 30px;
+        }
+
+        .results-container.show {
+            display: block;
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .result-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 15px;
+            padding: 30px;
+            text-align: center;
+            border: 2px solid;
+        }
+
+        .result-card.bust {
+            border-color: #ff6b6b;
+            background: rgba(255, 107, 107, 0.1);
+        }
+
+        .result-card.not-bust {
+            border-color: #26de81;
+            background: rgba(38, 222, 129, 0.1);
+        }
+
+        .verdict {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+
+        .result-card.bust .verdict {
+            color: #ff6b6b;
+        }
+
+        .result-card.not-bust .verdict {
+            color: #26de81;
+        }
+
+        .result-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            margin: 25px 0;
+        }
+
+        .result-stat {
+            padding: 20px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 10px;
+        }
+
+        .result-stat .number {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #48dbfb;
+        }
+
+        .result-stat .label {
+            color: #888;
+            margin-top: 5px;
+        }
+
+        .tier-badge {
+            display: inline-block;
+            padding: 10px 25px;
+            border-radius: 25px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            margin-top: 15px;
+        }
+
+        .tier-star { background: linear-gradient(90deg, #f9ca24, #f0932b); color: #000; }
+        .tier-quality { background: linear-gradient(90deg, #26de81, #20bf6b); color: #000; }
+        .tier-average { background: linear-gradient(90deg, #48dbfb, #0abde3); color: #000; }
+        .tier-below { background: linear-gradient(90deg, #a55eea, #8854d0); color: #fff; }
+        .tier-bust { background: linear-gradient(90deg, #ff6b6b, #ee5a5a); color: #fff; }
+        .tier-negative { background: linear-gradient(90deg, #576574, #222f3e); color: #fff; }
+
+        /* Preset Buttons */
+        .preset-section {
+            margin-bottom: 20px;
+        }
+
+        .preset-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+
+        .preset-btn {
+            padding: 8px 16px;
+            font-size: 0.85rem;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 20px;
+            background: rgba(255,255,255,0.05);
+            color: #fff;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .preset-btn:hover {
+            background: rgba(72, 219, 251, 0.2);
+            border-color: #48dbfb;
+        }
+
+        .preset-btn.bust-example {
+            border-color: #ff6b6b;
+        }
+
+        .preset-btn.star-example {
+            border-color: #26de81;
+        }
+
+        /* Info tooltip */
+        .info-text {
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        /* Loading state */
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255,255,255,0.1);
+            border-top-color: #48dbfb;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Error state */
+        .error-message {
+            display: none;
+            background: rgba(255, 107, 107, 0.2);
+            border: 1px solid #ff6b6b;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        .error-message.show {
+            display: block;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 30px;
+            color: #666;
+            font-size: 0.9rem;
+        }
+
+        footer a {
+            color: #48dbfb;
+            text-decoration: none;
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            h1 { font-size: 1.8rem; }
+            .form-grid { grid-template-columns: repeat(2, 1fr); }
+            .result-stats { grid-template-columns: 1fr; }
+            .model-stats { flex-direction: column; align-items: center; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏀 NBA Rookie Bust Predictor</h1>
+            <p class="subtitle">Machine Learning Model to Predict Rookie Success</p>
+            
+            <div class="model-stats">
+                <div class="stat-box">
+                    <div class="value">61.7%</div>
+                    <div class="label">Model R² Score</div>
+                </div>
+                <div class="stat-box">
+                    <div class="value">74.5%</div>
+                    <div class="label">Bust Detection F1</div>
+                </div>
+                <div class="stat-box">
+                    <div class="value">81.8%</div>
+                    <div class="label">Bust Recall</div>
+                </div>
+            </div>
+        </header>
+
+        <div class="form-container">
+            <!-- Preset Examples -->
+            <div class="preset-section">
+                <div class="section-title">📋 Quick Test Examples</div>
+                <div class="preset-buttons">
+                    <button class="preset-btn star-example" onclick="loadPreset('lebron')">LeBron James (Star)</button>
+                    <button class="preset-btn star-example" onclick="loadPreset('durant')">Kevin Durant (Star)</button>
+                    <button class="preset-btn bust-example" onclick="loadPreset('bennett')">Anthony Bennett (Bust)</button>
+                    <button class="preset-btn bust-example" onclick="loadPreset('darko')">Darko Miličić (Bust)</button>
+                    <button class="preset-btn" onclick="loadPreset('average')">Average Rookie</button>
+                </div>
+            </div>
+
+            <!-- Basic Stats -->
+            <div class="section-title">📊 Basic Stats</div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>Age</label>
+                    <input type="number" id="Age" placeholder="e.g., 19" step="1">
+                </div>
+                <div class="form-group">
+                    <label>Games (G)</label>
+                    <input type="number" id="G" placeholder="e.g., 70" step="1">
+                </div>
+                <div class="form-group">
+                    <label>Games Started (GS)</label>
+                    <input type="number" id="GS" placeholder="e.g., 65" step="1">
+                </div>
+                <div class="form-group">
+                    <label>Minutes (MP)</label>
+                    <input type="number" id="MP" placeholder="e.g., 2000" step="1">
+                </div>
+                <div class="form-group">
+                    <label>Points (PTS)</label>
+                    <input type="number" id="PTS" placeholder="e.g., 1000" step="1">
+                </div>
+                <div class="form-group">
+                    <label>Rebounds (TRB)</label>
+                    <input type="number" id="TRB" placeholder="e.g., 400" step="1">
+                </div>
+                <div class="form-group">
+                    <label>Assists (AST)</label>
+                    <input type="number" id="AST" placeholder="e.g., 300" step="1">
+                </div>
+                <div class="form-group">
+                    <label>Steals (STL)</label>
+                    <input type="number" id="STL" placeholder="e.g., 80" step="1">
+                </div>
+                <div class="form-group">
+                    <label>Blocks (BLK)</label>
+                    <input type="number" id="BLK" placeholder="e.g., 50" step="1">
+                </div>
+                <div class="form-group">
+                    <label>Turnovers (TOV)</label>
+                    <input type="number" id="TOV" placeholder="e.g., 150" step="1">
+                </div>
+            </div>
+
+            <!-- Advanced Stats -->
+            <div class="section-title">📈 Advanced Stats</div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>PER</label>
+                    <input type="number" id="PER" placeholder="e.g., 15.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>TS%</label>
+                    <input type="number" id="TS_pct" placeholder="e.g., 55.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>USG%</label>
+                    <input type="number" id="USG_pct" placeholder="e.g., 20.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>Win Shares (WS)</label>
+                    <input type="number" id="WS" placeholder="e.g., 5.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>WS/48</label>
+                    <input type="number" id="WS_48" placeholder="e.g., 0.100" step="0.001">
+                </div>
+                <div class="form-group">
+                    <label>BPM</label>
+                    <input type="number" id="BPM" placeholder="e.g., 2.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>VORP</label>
+                    <input type="number" id="VORP" placeholder="e.g., 2.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>OWS</label>
+                    <input type="number" id="OWS" placeholder="e.g., 3.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>DWS</label>
+                    <input type="number" id="DWS" placeholder="e.g., 2.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>OBPM</label>
+                    <input type="number" id="OBPM" placeholder="e.g., 1.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>DBPM</label>
+                    <input type="number" id="DBPM" placeholder="e.g., 1.0" step="0.1">
+                </div>
+            </div>
+
+            <!-- Shooting Stats -->
+            <div class="section-title">🎯 Shooting Stats</div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>FG%</label>
+                    <input type="number" id="FG_pct" placeholder="e.g., 45.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>3P%</label>
+                    <input type="number" id="ThreeP_pct" placeholder="e.g., 35.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>2P%</label>
+                    <input type="number" id="TwoP_pct" placeholder="e.g., 50.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>eFG%</label>
+                    <input type="number" id="eFG_pct" placeholder="e.g., 50.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>FT%</label>
+                    <input type="number" id="FT_pct" placeholder="e.g., 75.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>3PAr</label>
+                    <input type="number" id="ThreePAr" placeholder="e.g., 0.30" step="0.01">
+                </div>
+                <div class="form-group">
+                    <label>FTr</label>
+                    <input type="number" id="FTr" placeholder="e.g., 0.25" step="0.01">
+                </div>
+            </div>
+
+            <!-- Rebounding Stats -->
+            <div class="section-title">📦 Other Percentages</div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>ORB%</label>
+                    <input type="number" id="ORB_pct" placeholder="e.g., 5.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>DRB%</label>
+                    <input type="number" id="DRB_pct" placeholder="e.g., 15.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>TRB%</label>
+                    <input type="number" id="TRB_pct" placeholder="e.g., 10.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>AST%</label>
+                    <input type="number" id="AST_pct" placeholder="e.g., 15.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>STL%</label>
+                    <input type="number" id="STL_pct" placeholder="e.g., 1.5" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>BLK%</label>
+                    <input type="number" id="BLK_pct" placeholder="e.g., 1.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>TOV%</label>
+                    <input type="number" id="TOV_pct" placeholder="e.g., 12.0" step="0.1">
+                </div>
+            </div>
+
+            <button class="btn btn-primary" onclick="predict()">🔮 Predict Career</button>
+            <button class="btn btn-secondary" onclick="clearForm()">Clear Form</button>
+        </div>
+
+        <!-- Loading State -->
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Analyzing rookie stats...</p>
+        </div>
+
+        <!-- Error Message -->
+        <div class="error-message" id="error">
+            <strong>⚠️ Error:</strong> <span id="error-text"></span>
+        </div>
+
+        <!-- Results -->
+        <div class="results-container" id="results">
+            <div class="result-card" id="result-card">
+                <div class="verdict" id="verdict"></div>
+                
+                <div class="result-stats">
+                    <div class="result-stat">
+                        <div class="number" id="predicted-ws">--</div>
+                        <div class="label">Predicted Win Shares (Yrs 2-5)</div>
+                    </div>
+                    <div class="result-stat">
+                        <div class="number" id="bust-prob">--</div>
+                        <div class="label">Bust Probability</div>
+                    </div>
+                </div>
+
+                <div class="tier-badge" id="tier-badge">--</div>
+                
+                <p style="margin-top: 20px; color: #888; font-size: 0.9rem;">
+                    Win Shares scale: Bust (&lt;5) → Below Avg (5-15) → Avg Starter (15-25) → Quality (25-40) → Star (40+)
+                </p>
+            </div>
+        </div>
+
+        <footer>
+            <p>Built with Machine Learning • Ridge Regression + AdaBoost Classifier</p>
+            <p style="margin-top: 10px;">
+                <a href="https://www.basketball-reference.com/" target="_blank">Get stats from Basketball Reference</a>
+            </p>
+        </footer>
+    </div>
+
+    <script>
+        // API endpoint - change this to your server URL
+        const API_URL = 'http://localhost:5000/predict';
+
+        // Preset player data
+        const presets = {
+            lebron: {
+                Age: 19, G: 79, GS: 79, MP: 3122, PTS: 1654, TRB: 432, AST: 460, STL: 130, BLK: 58, TOV: 273,
+                PER: 18.3, 'TS%': 48.8, 'USG%': 28.0, WS: 5.1, 'WS/48': 0.078, BPM: 2.3, VORP: 3.2,
+                OWS: 1.5, DWS: 3.6, OBPM: 1.0, DBPM: 1.3,
+                'FG%': 41.7, '3P%': 29.0, '2P%': 43.8, 'eFG%': 43.8, 'FT%': 75.4, '3PAr': 0.158, FTr: 0.412,
+                'ORB%': 2.4, 'DRB%': 12.4, 'TRB%': 7.2, 'AST%': 21.6, 'STL%': 2.1, 'BLK%': 1.0, 'TOV%': 12.1
+            },
+            durant: {
+                Age: 19, G: 80, GS: 80, MP: 2768, PTS: 1624, TRB: 344, AST: 196, STL: 77, BLK: 79, TOV: 247,
+                PER: 15.6, 'TS%': 51.7, 'USG%': 28.4, WS: 0.3, 'WS/48': 0.005, BPM: -1.0, VORP: 0.6,
+                OWS: 0.5, DWS: -0.2, OBPM: 0.5, DBPM: -1.5,
+                'FG%': 43.0, '3P%': 28.8, '2P%': 45.5, 'eFG%': 45.2, 'FT%': 87.3, '3PAr': 0.165, FTr: 0.437,
+                'ORB%': 2.0, 'DRB%': 12.7, 'TRB%': 7.1, 'AST%': 11.2, 'STL%': 1.4, 'BLK%': 1.5, 'TOV%': 12.5
+            },
+            bennett: {
+                Age: 20, G: 52, GS: 0, MP: 533, PTS: 168, TRB: 108, AST: 23, STL: 10, BLK: 13, TOV: 42,
+                PER: 4.4, 'TS%': 42.1, 'USG%': 16.2, WS: -0.9, 'WS/48': -0.080, BPM: -6.3, VORP: -0.9,
+                OWS: -0.5, DWS: -0.3, OBPM: -5.5, DBPM: -0.8,
+                'FG%': 35.6, '3P%': 24.4, '2P%': 40.6, 'eFG%': 40.1, 'FT%': 60.0, '3PAr': 0.279, FTr: 0.195,
+                'ORB%': 6.1, 'DRB%': 12.7, 'TRB%': 9.3, 'AST%': 5.2, 'STL%': 1.0, 'BLK%': 1.5, 'TOV%': 14.3
+            },
+            darko: {
+                Age: 18, G: 34, GS: 1, MP: 239, PTS: 59, TRB: 56, AST: 5, STL: 5, BLK: 17, TOV: 21,
+                PER: 8.2, 'TS%': 41.9, 'USG%': 15.9, WS: -0.1, 'WS/48': -0.020, BPM: -3.4, VORP: -0.1,
+                OWS: -0.2, DWS: 0.1, OBPM: -4.1, DBPM: 0.7,
+                'FG%': 35.8, '3P%': 0.0, '2P%': 35.8, 'eFG%': 35.8, 'FT%': 58.1, '3PAr': 0.0, FTr: 0.463,
+                'ORB%': 8.4, 'DRB%': 17.6, 'TRB%': 12.8, 'AST%': 3.5, 'STL%': 1.1, 'BLK%': 3.8, 'TOV%': 17.5
+            },
+            average: {
+                Age: 22, G: 50, GS: 20, MP: 1000, PTS: 400, TRB: 150, AST: 100, STL: 40, BLK: 20, TOV: 80,
+                PER: 12.0, 'TS%': 50.0, 'USG%': 18.0, WS: 1.5, 'WS/48': 0.070, BPM: -1.0, VORP: 0.5,
+                OWS: 0.8, DWS: 0.7, OBPM: -0.5, DBPM: -0.5,
+                'FG%': 43.0, '3P%': 33.0, '2P%': 48.0, 'eFG%': 48.0, 'FT%': 75.0, '3PAr': 0.25, FTr: 0.25,
+                'ORB%': 5.0, 'DRB%': 12.0, 'TRB%': 8.5, 'AST%': 12.0, 'STL%': 1.5, 'BLK%': 1.0, 'TOV%': 13.0
+            }
+        };
+
+        // Field mapping (HTML id -> API field name)
+        const fieldMap = {
+            'Age': 'Age', 'G': 'G', 'GS': 'GS', 'MP': 'MP', 'PTS': 'PTS', 'TRB': 'TRB',
+            'AST': 'AST', 'STL': 'STL', 'BLK': 'BLK', 'TOV': 'TOV',
+            'PER': 'PER', 'TS_pct': 'TS%', 'USG_pct': 'USG%', 'WS': 'WS', 'WS_48': 'WS/48',
+            'BPM': 'BPM', 'VORP': 'VORP', 'OWS': 'OWS', 'DWS': 'DWS', 'OBPM': 'OBPM', 'DBPM': 'DBPM',
+            'FG_pct': 'FG%', 'ThreeP_pct': '3P%', 'TwoP_pct': '2P%', 'eFG_pct': 'eFG%',
+            'FT_pct': 'FT%', 'ThreePAr': '3PAr', 'FTr': 'FTr',
+            'ORB_pct': 'ORB%', 'DRB_pct': 'DRB%', 'TRB_pct': 'TRB%', 'AST_pct': 'AST%',
+            'STL_pct': 'STL%', 'BLK_pct': 'BLK%', 'TOV_pct': 'TOV%'
+        };
+
+        // Reverse map for loading presets
+        const reverseFieldMap = {};
+        for (let [htmlId, apiField] of Object.entries(fieldMap)) {
+            reverseFieldMap[apiField] = htmlId;
+        }
+
+        function loadPreset(name) {
+            const data = presets[name];
+            if (!data) return;
+
+            for (let [apiField, value] of Object.entries(data)) {
+                const htmlId = reverseFieldMap[apiField];
+                if (htmlId) {
+                    document.getElementById(htmlId).value = value;
+                }
+            }
+        }
+
+        function clearForm() {
+            for (let htmlId of Object.keys(fieldMap)) {
+                const el = document.getElementById(htmlId);
+                if (el) el.value = '';
+            }
+            document.getElementById('results').classList.remove('show');
+            document.getElementById('error').classList.remove('show');
+        }
+
+        function getFormData() {
+            const data = {};
+            for (let [htmlId, apiField] of Object.entries(fieldMap)) {
+                const el = document.getElementById(htmlId);
+                if (el && el.value) {
+                    data[apiField] = parseFloat(el.value);
+                }
+            }
+            return data;
+        }
+
+        function getTierClass(tier) {
+            const classes = {
+                'Star': 'tier-star',
+                'Quality Starter': 'tier-quality',
+                'Average Starter': 'tier-average',
+                'Below Average': 'tier-below',
+                'Bust': 'tier-bust',
+                'Negative Value': 'tier-negative'
+            };
+            return classes[tier] || 'tier-below';
+        }
+
+        async function predict() {
+            const data = getFormData();
+            
+            // Basic validation
+            if (!data.Age || !data.G || !data.MP) {
+                showError('Please fill in at least Age, Games (G), and Minutes (MP)');
+                return;
+            }
+
+            // Show loading
+            document.getElementById('loading').classList.add('show');
+            document.getElementById('results').classList.remove('show');
+            document.getElementById('error').classList.remove('show');
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showResults(result);
+                } else {
+                    showError(result.error || 'Prediction failed');
+                }
+            } catch (err) {
+                showError('Could not connect to server. Make sure app.py is running on localhost:5000');
+            }
+
+            document.getElementById('loading').classList.remove('show');
+        }
+
+        function showResults(result) {
+            const card = document.getElementById('result-card');
+            const isBust = result.is_bust;
+
+            // Update card style
+            card.className = 'result-card ' + (isBust ? 'bust' : 'not-bust');
+
+            // Update verdict
+            document.getElementById('verdict').textContent = isBust ? '⚠️ LIKELY BUST' : '✅ NOT A BUST';
+
+            // Update stats
+            document.getElementById('predicted-ws').textContent = result.predicted_win_shares;
+            document.getElementById('bust-prob').textContent = result.bust_probability + '%';
+
+            // Update tier badge
+            const tierBadge = document.getElementById('tier-badge');
+            tierBadge.textContent = result.tier;
+            tierBadge.className = 'tier-badge ' + getTierClass(result.tier);
+
+            // Show results
+            document.getElementById('results').classList.add('show');
+            
+            // Scroll to results
+            document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function showError(message) {
+            document.getElementById('error-text').textContent = message;
+            document.getElementById('error').classList.add('show');
+        }
+    </script>
+</body>
+</html>
