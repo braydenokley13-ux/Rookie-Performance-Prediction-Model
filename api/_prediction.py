@@ -1,28 +1,11 @@
-"""
-NBA Rookie Prediction API
-==========================
-Flask backend that serves the ML model predictions.
-
-To run locally:
-    pip install -r requirements.txt
-    python app.py
-
-Then open index.html in your browser (it points to /api/predict by default;
-during local dev you can either run the Vercel CLI with `vercel dev` or
-update API_URL in index.html to http://localhost:5000/predict).
-"""
+"""Shared prediction logic used by Vercel serverless functions."""
 
 import os
 import pickle
 
 import numpy as np
-from flask import Flask, jsonify, request
-from flask_cors import CORS
 from sklearn.dummy import DummyClassifier, DummyRegressor
 from sklearn.preprocessing import StandardScaler
-
-app = Flask(__name__)
-CORS(app)
 
 BASE_FEATURES = [
     'Age', 'G', 'GS', 'MP', 'PTS', 'TRB', 'AST', 'STL', 'BLK', 'TOV',
@@ -36,37 +19,7 @@ def base_feature_template():
     return {feature: 0 for feature in BASE_FEATURES}
 
 
-def build_fallback_model(feature_columns):
-    """Lightweight fallback so the API still boots without a pickle."""
-    n_features = len(feature_columns)
-    X_dummy = np.zeros((2, n_features))
-
-    reg_model = DummyRegressor(strategy='constant', constant=0.0)
-    reg_model.fit(X_dummy, [0.0, 0.0])
-
-    clf_model = DummyClassifier(strategy='prior')
-    clf_model.fit(X_dummy, [0, 1])
-
-    scaler = StandardScaler()
-    scaler.fit(X_dummy)
-
-    return {
-        'feature_columns': feature_columns,
-        'scaler': scaler,
-        'best_regression_model': reg_model,
-        'best_classification_model': clf_model,
-        'best_regression_needs_scaling': False,
-        'best_classification_needs_scaling': False,
-        'best_regression_name': 'DummyRegressor (fallback)',
-        'best_classification_name': 'DummyClassifier (fallback)',
-        'regression_performance': {'test_r2': 0.0},
-        'classification_performance': {'f1_score': 0.0},
-        'fallback': True,
-    }
-
-
 def prepare_player(stats):
-    """Takes basic stats and creates all engineered features."""
     s = stats.copy()
     for feature, default_value in base_feature_template().items():
         s.setdefault(feature, default_value)
@@ -115,27 +68,63 @@ def prepare_player(stats):
     return s
 
 
+def build_fallback_model(feature_columns):
+    n_features = len(feature_columns)
+    X_dummy = np.zeros((2, n_features))
+
+    reg_model = DummyRegressor(strategy='constant', constant=0.0)
+    reg_model.fit(X_dummy, [0.0, 0.0])
+
+    clf_model = DummyClassifier(strategy='prior')
+    clf_model.fit(X_dummy, [0, 1])
+
+    scaler = StandardScaler()
+    scaler.fit(X_dummy)
+
+    return {
+        'feature_columns': feature_columns,
+        'scaler': scaler,
+        'best_regression_model': reg_model,
+        'best_classification_model': clf_model,
+        'best_regression_needs_scaling': False,
+        'best_classification_needs_scaling': False,
+        'best_regression_name': 'DummyRegressor (fallback)',
+        'best_classification_name': 'DummyClassifier (fallback)',
+        'regression_performance': {'test_r2': 0.0},
+        'classification_performance': {'f1_score': 0.0},
+        'fallback': True,
+    }
+
+
+_MODEL_FILENAME = 'nba_advanced_model.pkl'
+_CANDIDATE_DIRS = [
+    os.path.dirname(__file__),
+    os.path.dirname(os.path.dirname(__file__)),
+    os.getcwd(),
+]
+
+
 def _load_model():
-    pkl_path = os.path.join(os.path.dirname(__file__), 'nba_advanced_model.pkl')
-    if os.path.exists(pkl_path):
-        try:
-            with open(pkl_path, 'rb') as f:
-                return pickle.load(f), None
-        except Exception as exc:  # noqa: BLE001
-            return None, f"Failed to unpickle model: {exc}"
-    return None, "Model pickle not found"
-
-
-print("Loading model...")
-_loaded, _err = _load_model()
-if _loaded is not None:
-    model = _loaded
-    print("Model loaded.")
-else:
-    print(_err)
-    print("Falling back to a dummy model. Predictions will be placeholders.")
+    for directory in _CANDIDATE_DIRS:
+        candidate = os.path.join(directory, _MODEL_FILENAME)
+        if os.path.exists(candidate):
+            try:
+                with open(candidate, 'rb') as f:
+                    return pickle.load(f)
+            except Exception:  # noqa: BLE001 -- fall through to dummy model
+                break
     fallback_stats = prepare_player(base_feature_template())
-    model = build_fallback_model(sorted(fallback_stats.keys()))
+    return build_fallback_model(sorted(fallback_stats.keys()))
+
+
+_model = None
+
+
+def get_model():
+    global _model
+    if _model is None:
+        _model = _load_model()
+    return _model
 
 
 def get_tier(ws):
@@ -153,6 +142,7 @@ def get_tier(ws):
 
 
 def run_prediction(stats):
+    model = get_model()
     full_stats = prepare_player(stats)
 
     feature_columns = model['feature_columns']
@@ -183,37 +173,6 @@ def run_prediction(stats):
             'classification_model': model.get('best_classification_name', 'Unknown'),
             'r_squared': round(model.get('regression_performance', {}).get('test_r2', 0.0), 3),
             'bust_f1': round(model.get('classification_performance', {}).get('f1_score', 0.0), 3),
+            'fallback': bool(model.get('fallback', False)),
         },
     }
-
-
-@app.route('/predict', methods=['POST'])
-def predict():
-    try:
-        stats = request.get_json(force=True) or {}
-        return jsonify(run_prediction(stats))
-    except Exception as e:  # noqa: BLE001
-        return jsonify({'success': False, 'error': str(e)}), 400
-
-
-@app.route('/health', methods=['GET'])
-def health():
-    return jsonify({
-        'status': 'ok',
-        'model_loaded': True,
-        'fallback_model': model.get('fallback', False),
-    })
-
-
-if __name__ == '__main__':
-    print("\n" + "=" * 50)
-    print(" NBA Rookie Prediction API")
-    print("=" * 50)
-    print(f" Model: {model.get('best_regression_name', 'Unknown')}")
-    print(f" R^2: {model.get('regression_performance', {}).get('test_r2', 0.0):.3f}")
-    print(f" Bust Detection F1: {model.get('classification_performance', {}).get('f1_score', 0.0):.3f}")
-    print("=" * 50)
-    port = int(os.environ.get("PORT", 5000))
-    print(f" Running on http://localhost:{port}")
-    print("=" * 50 + "\n")
-    app.run(host="0.0.0.0", port=port)
