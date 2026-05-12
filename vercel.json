@@ -1,0 +1,18 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/predict.py": {
+      "memory": 1024,
+      "maxDuration": 30,
+      "includeFiles": "nba_advanced_model.pkl"
+    },
+    "api/health.py": {
+      "memory": 512,
+      "maxDuration": 10,
+      "includeFiles": "nba_advanced_model.pkl"
+    }
+  },
+  "rewrites": [
+    { "source": "/", "destination": "/index.html" }
+  ]
+}

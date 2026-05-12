@@ -49,14 +49,39 @@ Open `index.html` in your web browser (just double-click it).
 - Or click a preset button (LeBron, Anthony Bennett, etc.)
 - Click "Predict Career"
 
+## ☁️ Deploy to Vercel
+
+The repo is ready to deploy as a Vercel project:
+
+- `index.html` is served as a static asset at `/`.
+- `api/predict.py` and `api/health.py` run as Python serverless functions and are exposed at `/api/predict` and `/api/health`.
+- `vercel.json` configures the functions and bundles `nba_advanced_model.pkl` alongside them via `includeFiles`.
+- `api/requirements.txt` keeps the function image small (only `numpy` + `scikit-learn`); the root `requirements.txt` adds Flask for local `python app.py` use.
+
+Two ways to deploy:
+
+1. **Vercel CLI** — from the project root:
+   ```bash
+   npm i -g vercel
+   vercel        # preview
+   vercel --prod # production
+   ```
+2. **Git integration** — push to GitHub and import the repo at https://vercel.com/new. No build command is needed; framework preset = "Other".
+
+Locally you can iterate with `vercel dev`, which serves the static `index.html` and runs the Python functions on the same origin (so the relative `/api/predict` URL just works).
+
 ## 📁 Files
 
 | File | Description |
 |------|-------------|
-| `index.html` | Frontend web interface |
-| `app.py` | Flask API server |
+| `index.html` | Frontend web interface (static, served at `/`) |
+| `api/predict.py` | Vercel serverless prediction endpoint (`POST /api/predict`) |
+| `api/health.py` | Vercel serverless health endpoint (`GET /api/health`) |
+| `api/_prediction.py` | Shared feature engineering + model loading |
+| `api/requirements.txt` | Python deps for the serverless functions |
+| `app.py` | Flask API server for local development |
 | `nba_advanced_model.pkl` | Trained ML model |
-| `simple_user_guide.py` | Command-line testing tool |
+| `vercel.json` | Vercel function config |
 
 ## 📊 Model Details
 

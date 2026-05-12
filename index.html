@@ -591,8 +591,9 @@
     </div>
 
     <script>
-        // API endpoint - change this to your server URL
-        const API_URL = 'http://localhost:5000/predict';
+        // API endpoint. On Vercel this hits the serverless function at /api/predict.
+        // For local Flask dev (python app.py), override with: window.API_URL = 'http://localhost:5000/predict'
+        const API_URL = window.API_URL || '/api/predict';
 
         // Preset player data
         const presets = {
@@ -724,7 +725,7 @@
                     showError(result.error || 'Prediction failed');
                 }
             } catch (err) {
-                showError('Could not connect to server. Make sure app.py is running on localhost:5000');
+                showError('Could not reach the prediction API. If running locally, start the backend with `python app.py` or `vercel dev`.');
             }
 
             document.getElementById('loading').classList.remove('show');
